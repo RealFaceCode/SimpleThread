@@ -287,5 +287,6 @@ public:
         for(auto* t : threads)
             delete t;
         threads.clear();
-    }};
+    }
+};
 #endif //SIMPLETHREAD_H
