@@ -1,292 +1,421 @@
-#ifndef SIMPLETHREAD_H
-#define SIMPLETHREAD_H
-
-#include <iostream>
-#include <string>
-#include <thread>
-#include <queue>
-#include <vector>
-
-#define hash(str) std::hash<std::string>{}(str)
-
-struct ThreadTask
+/**
+ * @class ThreadData
+ * @brief Represents a container for data that can be shared among threads.
+ *
+ * The ThreadData class ensures that only one thread can access the data at a time through synchronization.
+ */
+class ThreadData
         {
         private:
-            bool finish = false;
-            bool failed = false;
-            bool working = false;
-            void* inData = nullptr;
-            void* outData = nullptr;
-            ThreadTask* depends = nullptr;
-            uint64_t instructionType = 0;
+            std::shared_ptr<void*> mData;
+            bool mWorking;
+        private:
+            /**
+            * @brief Waits until the data is free (not being worked on by other threads).
+            */
+            void p_waitUntilFree()
+            {
+                while(mWorking);
+            }
 
         public:
-            ThreadTask() = default;
-            ThreadTask(void* inData, void* outData, const std::string& iType, ThreadTask* dData)
-            : inData(inData), outData(outData), instructionType(hash(iType)), depends(dData)
+            /**
+            * @brief Default constructor.
+            * Initializes the ThreadData object with no data and sets it as not being worked on.
+            */
+            ThreadData()
+            : mData(nullptr), mWorking(false)
             {}
 
-            void setInDataPtr(void* data)
+            /**
+             * @brief Constructor with data input.
+             * Initializes the ThreadData object with the provided data and sets it as not being worked on.
+             *
+             * @tparam IN_DATA The type of input data.
+             * @param[in] data The input data.
+             */
+            template<typename IN_DATA>
+            ThreadData(IN_DATA& data)
+            : mData(std::make_shared<void*>(static_cast<void*>(&data))), mWorking(false)
+            {}
+
+            /**
+             * @brief Retrieves the shared pointer to the data after waiting until the data is free.
+             *
+             * @return Shared pointer to the data.
+             */
+            std::shared_ptr<void*> getData()
             {
-                this->inData = data;
+                p_waitUntilFree();
+                mWorking = true;
+                return mData;
             }
 
-            void setOutDataPtr(void* data)
+            /**
+             * @brief Unlocks the data after the operation is completed, indicating that the data is free for other threads to access.
+             */
+            void unlock()
             {
-                this->outData = data;
-            }
-
-            template<typename RTYPE>
-            RTYPE& getInDataPtrAs()
-            {
-                return *(RTYPE*)inData;
-            }
-
-            template<typename RTYPE>
-            RTYPE& getOutDataPtrAs()
-            {
-                return *(RTYPE*)outData;
-            }
-
-            void setInstructionType(const std::string& iType)
-            {
-                instructionType = hash(iType);
-            }
-
-            bool compareInstructionType(const std::string& iType) const
-            {
-                return instructionType == hash(iType);
-            }
-
-            void setDependency(ThreadTask* dData)
-            {
-                depends = dData;
-            }
-
-            bool isDependencyReady()
-            {
-                if(!depends)
-                    return true;
-                if(depends->finish)
-                    return true;
-                return false;
-            }
-
-            bool isFinish() const
-            {
-                return finish;
-            }
-
-            void setFinish(const bool& f = true)
-            {
-                finish = f;
-            }
-
-            bool hasFailed() const
-            {
-                return failed;
-            }
-
-            void setFailed()
-            {
-                failed = true;
-            }
-
-            bool isWorking() const
-            {
-                return working;
-            }
-
-            void setWorking(const bool& work)
-            {
-                working = work;
+                mWorking = false;
             }
         };
 
-enum ThreadStatus
+/**
+ * @class ThreadTask
+ * @brief Represents a task that can be executed by a thread.
+ *
+ * The ThreadTask class contains input and output ThreadData objects, indicating the data that the task requires as input and produces as output.
+ * It also manages task completion status and provides a way to compare tasks based on their instructions.
+ */
+class ThreadTask
         {
-    Offline,
-    Idle,
-    Working,
-    };
+        private:
+            ThreadData mIn;
+            ThreadData mOut;
+            bool mFinished;
+            uint64_t mTaskInstruction;
 
-void workerFunc(std::deque<ThreadTask*>* iData, ThreadStatus* stat, bool* running, bool* pullFromQueue, uint64_t threadID, bool uWorkerFunc(ThreadTask*, uint64_t))
-{
-    while(*running)
-    {
-        if(*stat == Offline)
-            break;
+        public:
+            /**
+             * @brief Default constructor.
+             * Initializes the ThreadTask object with no data and sets it as not finished.
+             */
+            ThreadTask()
+            : mFinished(false), mTaskInstruction(0)
+            {}
 
-        ThreadTask* data = nullptr;
+            /**
+             * @brief Constructor with input and output data and a task instruction.
+             * Initializes the ThreadTask object with the provided input and output data, sets it as not finished, and computes a hash value for the given task instruction.
+             *
+             * @tparam IN_DATA The type of input data.
+             * @tparam OUT_DATA The type of output data.
+             * @param[in] inData The input data.
+             * @param[in] outData The output data.
+             * @param[in] taskInstruction The instruction associated with the task.
+             */
+            template<typename IN_DATA, typename OUT_DATA>
+            ThreadTask(IN_DATA& inData, OUT_DATA& outData, const std::string& taskInstruction)
+            : mIn(inData),
+            mOut(outData),
+            mFinished(false),
+            mTaskInstruction(std::hash<std::string>()(taskInstruction))
+            {}
 
-        if(!*pullFromQueue)
-        {
-            *pullFromQueue = true;
-            if(iData->empty())
+            /**
+             * @brief Retrieves the input data of the specified type.
+             *
+             * @tparam TYPE The type of input data.
+             * @return Reference to the input data of the specified type.
+             */
+            template<typename TYPE>
+            TYPE& getInData()
             {
-                *stat = Idle;
-                continue;
+                return *static_cast<TYPE*>(*mIn.getData());
             }
 
-            data = iData->front();
+            /**
+             * @brief Retrieves the output data of the specified type.
+             *
+             * @tparam TYPE The type of output data.
+             * @return Reference to the output data of the specified type.
+             */
+            template<typename TYPE>
+            TYPE& getOutData()
+            {
+                return *static_cast<TYPE*>(*mOut.getData());
+            }
 
-            if(data->isWorking())
-                continue;
-            if(!data->isDependencyReady())
-                continue;
+            /**
+             * @brief Unlocks the input data after the operation is completed, indicating that it is free for other threads to access.
+             */
+            void unlockInData()
+            {
+                mIn.unlock();
+            }
 
-            data->setWorking(true);
+            /**
+             * @brief Unlocks the output data after the operation is completed, indicating that it is free for other threads to access.
+             */
+            void unlockOutData()
+            {
+                mOut.unlock();
+            }
 
-            iData->pop_front();
-            *pullFromQueue = false;
-        }
+            /**
+             * @brief Checks whether the task has finished its execution.
+             *
+             * @return True if the task has finished; otherwise, false.
+             */
+            bool isFinished() const
+            {
+                return mFinished;
+            }
 
-        if(!data)
-        {
-            *stat = Idle;
-            continue;
-        }
+            /**
+             * @brief Marks the task as finished.
+             */
+            void setFinish()
+            {
+                mFinished = true;
+            }
 
-        if(data->isFinish())
-        {
-            *stat = Idle;
-            continue;
-        }
+            /**
+             * @brief Compares the task's instruction with the given instruction and returns true if they match, otherwise false.
+             *
+             * @param[in] taskInstruction The instruction to compare with the task's instruction.
+             * @return True if the instructions match; otherwise, false.
+             */
+            bool compareTaskInstruction(const std::string& taskInstruction)
+            {
+                return mTaskInstruction == std::hash<std::string>()(taskInstruction);
+            }
+        };
 
-        *stat = Working;
-        data->setFinish(uWorkerFunc(data, threadID));
-        data->setWorking(false);
-
-        if(!data->isFinish())
-            data->setFailed();
-    }
-    *stat = Offline;
+/**
+ * @brief Creates a new instance of the ThreadTask class with the provided input and output data and a task instruction.
+ *
+ * @tparam IN_DATA The type of input data.
+ * @tparam OUT_DATA The type of output data.
+ * @param[in] inData A reference to the input data that the task requires.
+ * @param[in] outData A reference to the output data that the task will produce.
+ * @param[in] taskInstruction The instruction associated with the task.
+ * @return A shared pointer to the newly created ThreadTask object.
+ */
+template<typename IN_DATA, typename OUT_DATA>
+std::shared_ptr<ThreadTask> createThreadTask(IN_DATA& inData, OUT_DATA& outData, const std::string& taskInstruction)
+{
+    return std::make_shared<ThreadTask>(inData, outData, taskInstruction);
 }
 
-struct Thread
-{
-private:
-    std::thread thread;
-    ThreadStatus wStat = Offline;
-    bool running = false;
-    uint64_t id;
-    static uint64_t threadID;
-
-public:
-    Thread() = default;
-
-    Thread(bool uWorkerFunc(ThreadTask*, uint64_t), std::deque<ThreadTask*>* data, bool* pullFromQueue)
-    {
-        run(uWorkerFunc, data, pullFromQueue);
-    }
-
-    void run(bool uWorkerFunc(ThreadTask*, uint64_t), std::deque<ThreadTask*>* data, bool* pullFromQueue)
-    {
-        id = threadID;
-        threadID++;
-        wStat = Working;
-        running = true;
-        thread = std::thread(workerFunc, data, &wStat, &running, pullFromQueue, id, uWorkerFunc);
-        thread.detach();
-#ifdef THREAD_LOG_INFO
+/**
+ * @class ThreadQueue
+ * @brief Represents a thread-safe queue of ThreadTask objects.
+ *
+ * The ThreadQueue class allows tasks to be pushed into the queue and retrieved in a thread-safe manner.
+ */
+class ThreadQueue
         {
-            std::string str("Started thread with ID[");
-            str += std::to_string(id);
-            str += "]";
-            std::cout << str << std::endl;
-        }
-#endif
-    }
+        private:
+            std::deque<std::shared_ptr<ThreadTask>> mTasks;
+            bool mWorkOnQueue;
 
-    void kill()
-    {
-        running = false;
-        pthread_kill(thread.native_handle(),0);
-#ifdef THREAD_LOG_INFO
+        private:
+            /**
+             * @brief Waits until the queue is free to avoid concurrent access.
+             */
+            void p_waitUntilFree() const
+            {
+                while(mWorkOnQueue);
+            }
+
+        public:
+            /**
+             * @brief Default constructor.
+             * Initializes the ThreadQueue object with an empty task queue and sets it as not being worked on.
+             */
+            ThreadQueue()
+            : mTasks(), mWorkOnQueue(false)
+            {}
+
+            /**
+             * @brief Destructor.
+             */
+            ~ThreadQueue()
+            {}
+
+            /**
+             * @brief Pushes a task into the queue, waiting until the queue is free to avoid concurrent access.
+             *
+             * @param[in] task A shared pointer to the task to be added to the queue.
+             */
+            void pushTask(std::shared_ptr<ThreadTask>& task)
+            {
+                p_waitUntilFree();
+                mWorkOnQueue = true;
+                mTasks.emplace_back(task);
+                mWorkOnQueue = false;
+            }
+
+            /**
+             * @brief Retrieves the first task from the queue if available, waiting until the queue is free to avoid concurrent access.
+             *
+             * @return A shared pointer to the first task in the queue, or nullptr if the queue is empty.
+             */
+            std::shared_ptr<ThreadTask> getFirstTask()
+            {
+                if (!mTasks.empty())
+                {
+                    p_waitUntilFree();
+                    mWorkOnQueue =  true;
+                    auto r = mTasks.front();
+                    mWorkOnQueue = false;
+                    return r;
+                }
+                else
+                    return nullptr;
+            }
+
+            /**
+             * @brief Removes the first task from the queue if available, waiting until the queue is free to avoid concurrent access.
+             */
+            void removeFirstTask()
+            {
+                if (!mTasks.empty())
+                {
+                    p_waitUntilFree();
+                    mWorkOnQueue =  true;
+                    mTasks.pop_front();
+                    mWorkOnQueue = false;
+                }
+            }
+        };
+
+/**
+ * @class ThreadPool
+ * @brief Represents a pool of worker threads that can execute tasks concurrently.
+ *
+ * The ThreadPool class uses a ThreadQueue to manage the tasks for the worker threads.
+ */
+class ThreadPool
         {
-            std::string str("Killed thread with ID[");
-            str += std::to_string(id);
-            str += "]";
-            std::cout << str << std::endl;
-        }
-#endif
-    }
+        private:
+            std::vector<std::thread> mThreads;
+            ThreadQueue mTaskQueue;
+            bool mStop;
+            int mMaxThreads;
 
-    ThreadStatus getThreadStatus() const
-    {
-        return wStat;
-    }
+        public:
+            /**
+             * @brief Default constructor.
+             * Initializes the ThreadPool object with the maximum number of threads allowed based on the available hardware cores.
+             */
+            ThreadPool()
+            : mStop(false)
+            {
+                int numCores = std::thread::hardware_concurrency();
+                mMaxThreads = std::max(1, numCores - 1);
+            }
 
-    uint64_t getThreadID() const
-    {
-        return threadID;
-    }
+            /**
+             * @brief Constructor with a specified maximum number of threads.
+             * Initializes the ThreadPool object with the given maximum number of threads, which should be less than or equal to the available hardware cores.
+             *
+             * @param[in] maxThreads The maximum number of threads in the thread pool.
+             */
+            ThreadPool(int maxThreads)
+            : mStop(false), mMaxThreads(maxThreads)
+            {
+                int numCores = std::thread::hardware_concurrency();
+                mMaxThreads = std::min(maxThreads, std::max(1, numCores - 1));
+            }
 
-    bool isRunning()
-    {
-        return running;
-    }
-};
-uint64_t Thread::threadID = 0;
+            /**
+             * @brief Starts the thread pool with the given user-defined worker function that will be executed by the worker threads.
+             *
+             * @param[in] userWorkerFunc The user-defined worker function to be executed by the worker threads.
+             */
+            void start(std::function<bool(ThreadTask&, uint64_t)> userWorkerFunc)
+            {
+                for (int i = 0; i < mMaxThreads; ++i)
+                {
+                    mThreads.emplace_back(std::bind(&ThreadPool::workerFunc, this, userWorkerFunc, i));
+                }
+            }
 
-struct ThreadPool
-{
-private:
-    std::deque<ThreadTask*> data;
-    bool pullingFromQueue = false;
-    std::vector<Thread*> threads;
-    uint8_t maxNumThreads;
 
-public:
-    ThreadPool()
-    {}
+            /**
+             * @brief Stops the thread pool and waits for all worker threads to finish their tasks before cleaning up.
+             */
+            void stop()
+            {
+                mStop = true;
+                for (auto& thread : mThreads)
+                {
+                    if (thread.joinable())
+                        thread.join();
+                }
+                mThreads.clear();
+                mStop = false;
+            }
 
-    ThreadPool(const uint8_t& numThreads)
-    {
-        uint8_t numCores = std::thread::hardware_concurrency();
-        if(numThreads > numCores - 1)
-            maxNumThreads = numCores;
-        maxNumThreads = numThreads;
-    }
 
-    void start(bool uFunc(ThreadTask*, uint64_t))
-    {
-#ifdef THREAD_LOG_INFO
-        std::cout << "Started thread pool with " << (int)maxNumThreads << " threads" << std::endl;
-#endif
-        for(int i = 0; i < maxNumThreads; i++)
-            threads.emplace_back(new Thread(uFunc, &data, &pullingFromQueue));
-    }
+            /**
+             * @brief Pushes a task into the task queue of the thread pool.
+             *
+             * @param[in] task A shared pointer to the task to be added to the task queue.
+             */
+            void pushTask(std::shared_ptr<ThreadTask> task)
+            {
+                mTaskQueue.pushTask(task);
+            }
 
-    void kill()
-    {
-        for(auto& t : threads)
-            t->kill();
-#ifdef THREAD_LOG_INFO
-        std::cout << "Killed thread pool with " << (int)maxNumThreads << " threads" << std::endl;
-#endif
-    }
 
-    void addThreadTask(ThreadTask* task)
-    {
-        data.emplace_back(task);
-    }
+            void workerFunc(std::function<bool(ThreadTask&, uint64_t)> userWorkerFunc, uint64_t threadID)
+            {
+                while (!mStop)
+                {
+                    std::shared_ptr<ThreadTask> task = mTaskQueue.getFirstTask();
+                    if (task)
+                    {
+                        if (userWorkerFunc(*task, threadID))
+                        {
+                            task->setFinish();
+                        }
+                        else
+                        {
+                            task->unlockInData();
+                        }
+                        task->unlockOutData();
+                        mTaskQueue.removeFirstTask();
+                    }
+                    else
+                        std::this_thread::sleep_for(std::chrono::nanoseconds(1));
+                }
+            }
 
-    bool checkRunning()
-    {
-        for(auto& t : threads)
-            if(t->getThreadStatus() != Offline)
-                return true;
-            return false;
-    }
+            /**
+             * @brief Returns the number of active threads in the thread pool.
+             *
+             * @return The number of active threads in the thread pool.
+             */
+            int getNumActiveThreads() const
+            {
+                int numActiveThreads = 0;
+                for (const auto& thread : mThreads)
+                {
+                    if (thread.joinable())
+                        numActiveThreads++;
+                }
+                return numActiveThreads;
+            }
 
-    void clean()
-    {
-        if(checkRunning())
-            return;
-        for(auto* t : threads)
-            delete t;
-        threads.clear();
-    }
-};
-#endif //SIMPLETHREAD_H
+            /**
+             * @brief Returns the maximum number of threads allowed in the thread pool.
+             *
+             * @return The maximum number of threads allowed in the thread pool.
+             */
+            int getMaxThreads() const
+            {
+                return mMaxThreads;
+            }
+
+            /**
+             * @brief Adds additional threads to the thread pool up to the specified number, considering the available hardware cores and the current number of threads.
+             *
+             * @param[in] numThreads The number of threads to add to the thread pool.
+             * @param[in] userWorkerFunc The user-defined worker function to be executed by the newly added threads.
+             */
+            void addThreads(int numThreads, std::function<bool(ThreadTask&, uint64_t)> userWorkerFunc)
+            {
+                int numCores = std::thread::hardware_concurrency();
+                int maxAdditionalThreads = std::max(0, numCores - 1 - static_cast<int>(mThreads.size()));
+                int numThreadsToAdd = std::min(numThreads, maxAdditionalThreads);
+                mMaxThreads += numThreadsToAdd;
+
+                for (int i = 0; i < numThreadsToAdd; ++i)
+                {
+                    mThreads.emplace_back(std::bind(&ThreadPool::workerFunc, this, userWorkerFunc, i));
+                }
+            }
+        };
