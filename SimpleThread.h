@@ -1,3 +1,11 @@
+#include <memory>
+#include <thread>
+#include <queue>
+#include <iostream>
+#include <chrono>
+#include <functional>
+#include <random>
+
 /**
  * @class ThreadData
  * @brief Represents a container for data that can be shared among threads.
