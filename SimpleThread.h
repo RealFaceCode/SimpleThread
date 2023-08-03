@@ -1,3 +1,6 @@
+#ifndef SIMPLE_THREAD_HPP
+#define SIMPLE_THREAD_HPP
+
 #include <memory>
 #include <thread>
 #include <queue>
@@ -427,3 +430,4 @@ class ThreadPool
                 }
             }
         };
+#endif // SIMPLE_THREAD_HPP
